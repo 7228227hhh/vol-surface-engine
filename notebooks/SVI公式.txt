@@ -1,0 +1,12 @@
+w(k) = a + b * ( rho * (k - m) + sqrt( (k - m)^2 + sigma^2 ) )
+
+参数说明：
+k = ln(K/F) (对数行权价)（K是strike price ,F是foward price(远期价格））
+w(k) = 隐含方差 = (隐含波动率^2) * 剩余时间
+
+参数范围：
+a: 水平参数（最小值）
+b >= 0：斜率参数
+|rho| < 1：ρ是偏度参数
+m: 任意实数 ：ATM位置参数
+sigma > 0：平滑参数
