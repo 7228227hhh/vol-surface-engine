@@ -34,11 +34,11 @@ expiry_example=df['expiry_date'].unique()[0]
 sample=grouped[grouped['expiry_date'] == expiry_example].sort_values('strike')
 print(sample.head(10))
 #------------------------定义svi函数--------------------------
-def svi_w(k,a,b,rho,sigma,m):
+def svi_w(k,a,b,rho,m,sigma):
     sqrt_term=np.sqrt((k-m)**2+sigma**2)
     return a+b*(rho*(k-m)+sqrt_term)
-def svi_iv(k,a,b,rho,sigma,m,T):
-    w=svi_w(k,a,b,rho,sigma,m)
+def svi_iv(k,a,b,rho,m,sigma,T):
+    w=svi_w(k,a,b,rho,m,sigma)
     w=np.maximum(w,0)
     return np.sqrt(w/T)
 test_k=np.array([-0.5,0,0.5])
@@ -47,7 +47,7 @@ print("测试 SVI 函数:")
 for k, w in zip(test_k, test_w):
     print(f"  k={k:.2f} -> w={w:.5f}")
 #-----------定义损失函数和权重-----------------
-def svi_loss(params, k_obs, w_obs, weights=None):
+def svi_loss(params, k_obs, w_obs, weights=None):#后续可以考虑加上正则化
     """SVI 拟合的损失函数"""
     a, b, rho, m, sigma = params
 
@@ -66,6 +66,7 @@ def svi_loss(params, k_obs, w_obs, weights=None):
         loss = np.mean((w_obs - w_pred) ** 2)
     else:
         loss = np.mean(weights * (w_obs - w_pred) ** 2)
+    loss=loss*1e6
 
     return loss + penalty
 def get_weights(k_obs):#这里的k_obs需要传入列表或者是数组
@@ -137,17 +138,17 @@ def fit_svi_for_expiry(df_grouped,expiry_date):
         args=(k_obs, w_obs, weights),
         method='L-BFGS-B',#内存占用小，支持边界约束,SVI就用这个方法就可以了
         bounds=[
-            (0.0001, 1.0),
+            (0.000001, 1.0),
             (0.01, 2.0),
             (-0.99, 0.99),
             (-1.0, 1.0),
             (0.01, 1.0)
         ],
-        options={'maxiter': 5000, 'disp': False}#最大迭代次数为500次，disp=False就是静默模式，安静的运行，不输出
+        options={'maxiter': 5000, 'disp': False}#最大迭代次数为5000次，disp=False就是静默模式，安静的运行，不输出
     )
     if result.success:
         a, b, rho, m, sigma = result.x
-        print(f"  拟合成功! 损失: {result.fun:.6f}")
+        print(f"  拟合成功! 损失: {result.fun:.2e}")
         print(f"  最终参数: a={a:.5f}, b={b:.5f}, rho={rho:.3f}, m={m:.5f}, sigma={sigma:.3f}")
 
         return {
