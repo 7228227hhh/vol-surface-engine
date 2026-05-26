@@ -3,6 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from datetime import datetime
+
+import binance_fetcher
+
 plt.rcParams['font.sans-serif'] = ['SimHei','DejaVuSans','Microsoft YaHei','Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False#解决负号问题
 plt.rcParams['mathtext.fontset'] = 'stix'#stix数学字体
@@ -144,7 +147,7 @@ def fit_svi_for_expiry(df_grouped,expiry_date):
             (-1.0, 1.0),
             (0.01, 1.0)
         ],
-        options={'maxiter': 5000, 'disp': False}#最大迭代次数为5000次，disp=False就是静默模式，安静的运行，不输出
+        options={'maxiter': 50000, 'disp': False}#最大迭代次数为50000次，disp=False就是静默模式，安静的运行，不输出
     )
     if result.success:
         a, b, rho, m, sigma = result.x
@@ -233,17 +236,132 @@ def plot_svi_fit(fit_result,save_path=None):
 # 9. 运行拟合
 # ============================================================
 
-# 先查看有哪些到期日
+# 查看有哪些到期日
 print("\n可用的 BTC 到期日:")
 for exp in grouped['expiry_date'].unique():
     subset = grouped[grouped['expiry_date'] == exp]
     print(f"  {exp} (T={subset['T'].iloc[0]:.5f}, 合约数={len(subset)})")
 
-test_expiry='2026/6/26 16:00'
+"""test_expiry='2026/6/26 16:00'
 result=fit_svi_for_expiry(grouped, test_expiry)
 save_path='result_plt_show.png'
 if result:
-    plot_svi_fit(result,save_path)
+    plot_svi_fit(result,save_path)"""
 
+
+# ============================================================
+# 运行四张图
+# ===========================================================
+"""spot_price= binance_fetcher.get_spot_price('BTC')
+if spot_price is None:
+    print("请先运行价格获取模块获取现货价格")
+else:
+    # 图1和图2：plot_svi_fit
+    test_expiry = sorted(grouped['expiry_date'].unique())[0]  # 取最近的到期日
+    result = fit_svi_for_expiry(grouped, test_expiry)
+    if result:
+        plot_svi_fit(result, save_path='fig1_fig2_svi_fit.png')
+
+    # 图3：多个到期日对比
+    plot_multiple_tenors_iv(grouped, spot_price,
+                            save_path='fig3_multiple_tenors.png')
+
+    # 图4：3D曲面
+    plot_vol_surface_3d(grouped, spot_price,
+                        save_path='fig4_vol_surface.png')"""
+spot_price = binance_fetcher.get_spot_price('BTC')
+if spot_price is None:
+    print("请先运行价格获取模块获取现货价格")
+else:
+    # 批量拟合所有到期日（预先拟合一次）
+    print("\n开始批量拟合所有到期日...")
+    all_fits = {}
+    for expiry in grouped['expiry_date'].unique():
+        subset = grouped[grouped['expiry_date'] == expiry]
+        """T=subset['T'].iloc[0]
+        if T < 0.0411:  # 15天 = 15/365 ≈ 0.0411年
+            print(f"跳过 {expiry} (T={T:.5f}年 = {T * 365:.1f}天，期限太短)")
+            continue"""
+        if len(subset) >= 5:
+            fit_result = fit_svi_for_expiry(grouped, expiry)
+            if fit_result and fit_result['success']:
+                all_fits[expiry] = fit_result
+                print(f"✓ 成功拟合 {expiry}")
+
+    # 图1和图2：单个到期日（取第一个成功拟合的）
+    if all_fits:
+        test_expiry = list(all_fits.keys())[0]
+        result = all_fits[test_expiry]
+        plot_svi_fit(result, save_path='fig1_fig2_svi_fit.png')
+
+    # 图3：多个到期日对比
+    if len(all_fits) >= 2:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        colors = ['blue', 'red', 'green', 'purple', 'orange']
+
+        for i, (expiry, fit_result) in enumerate(list(all_fits.items())[:4]):
+            T = fit_result['T']
+            a, b, rho, m, sigma = fit_result['params']
+
+            subset = grouped[grouped['expiry_date'] == expiry]
+            k_obs = subset['log_moneyness'].values
+
+            k_smooth = np.linspace(k_obs.min() - 0.1, k_obs.max() + 0.1, 200)
+            w_smooth = svi_w(k_smooth, a, b, rho, m, sigma)
+            iv_smooth = np.sqrt(w_smooth / T)
+
+            ax.plot(k_smooth, iv_smooth, color=colors[i % len(colors)],
+                    linewidth=2, label=f'{expiry} (T={T:.3f})')
+
+        ax.set_xlabel('log_moneyness (k)')
+        ax.set_ylabel('隐含波动率 (IV)')
+        ax.set_title('多个到期日IV微笑对比')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('fig3_multiple_tenors.png', dpi=300, bbox_inches='tight')
+        print("图3已保存到 fig3_multiple_tenors.png")
+        plt.show()
+
+    # 图4：3D曲面
+    if len(all_fits) >= 2:
+        from mpl_toolkits.mplot3d import Axes3D
+
+        all_k, all_T, all_iv = [], [], []
+
+        for expiry, fit_result in all_fits.items():
+            T = fit_result['T']
+            T_days=T*365
+            a, b, rho, m, sigma = fit_result['params']
+
+            subset = grouped[grouped['expiry_date'] == expiry]
+            k_obs = subset['log_moneyness'].values
+
+            k_smooth = np.linspace(k_obs.min() - 0.05, k_obs.max() + 0.05, 30)
+            w_smooth = svi_w(k_smooth, a, b, rho, m, sigma)
+            iv_smooth = np.sqrt(w_smooth / T)
+
+            for k_val, iv_val in zip(k_smooth, iv_smooth):
+                all_k.append(k_val)
+                all_T.append(T_days)
+                all_iv.append(iv_val)
+
+        if all_k:
+            fig = plt.figure(figsize=(12, 8))
+            ax = fig.add_subplot(111, projection='3d')
+
+            scatter = ax.scatter(all_k, all_T, all_iv, c=all_iv, cmap='coolwarm',
+                                 s=20, alpha=0.7)
+
+            ax.set_xlabel('log_moneyness (k)')
+            ax.set_ylabel('到期时间 T (天)')
+            ax.set_zlabel('隐含波动率 (IV)')
+            ax.set_title('BTC期权隐含波动率曲面')
+
+            plt.colorbar(scatter, ax=ax, shrink=0.5, aspect=10)
+            plt.tight_layout()
+            plt.savefig('fig4_vol_surface.png', dpi=300, bbox_inches='tight')
+            print("图4已保存到 fig4_vol_surface.png")
+            plt.show()
 
 

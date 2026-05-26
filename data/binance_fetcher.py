@@ -14,7 +14,7 @@ import threading
 import asyncio
 import time
 import sys
-
+from websockets_proxy import  Proxy,proxy_connect
 # 1. 获取期权标记价格（含IV和Greeks）
 mark_url = "https://eapi.binance.com/eapi/v1/mark"#请注意，mark_url返回的所有字段都是理论值，币安综合了买卖双方以及做市商的报价后，利用bs模型从市场里面反推出来的greeks和iv，仅供参考，不代表实际成交）
 #params = {"underlying": "BTCUSDT"}
@@ -62,7 +62,7 @@ for item in mark_data:
     static = static_data[symbol]
     expiry_ms=int(static['expiryDate'])
     expiry_date=datetime.fromtimestamp(expiry_ms/1000)
-    days_left=(expiry_date - now).days
+    days_left=(expiry_date - now).total_seconds()/86400#精确到天的小数
     if days_left < 1:
         continue
 
@@ -136,8 +136,9 @@ def start_websocket_thread():
 async def subscribe_spot_price():
     """订阅实时价格"""
     uri = "wss://stream.binance.com:9443/ws"
+    proxy = Proxy.from_url("http://127.0.0.1:1080")
 
-    async with websockets.connect(uri) as ws:#async with和普通with用法类似，由于websockets.connect(uri)订阅是一个异步过程，所以为了方便不用手动关闭，就用自动管理
+    async with proxy_connect(uri,proxy=proxy) as ws:#async with和普通with用法类似，由于websockets.connect(uri)订阅是一个异步过程，所以为了方便不用手动关闭，就用自动管理
         # 订阅成交数据
         subscribe_msg = {
             "method": "SUBSCRIBE",
